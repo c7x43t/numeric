@@ -7,6 +7,7 @@ const five_scaled = 5n * one_scaled;
 const bi = new Array(64).fill(0).map((e, i) => BigInt(i));
 const nbi = new Array(64).fill(0).map((e, i) => BigInt(-i));
 const zeroes = new Array(32).fill("").map((e, i) => "0".repeat(i));
+const magic_log = 2n**73n;
 function fastPadStart0(str, len) {
   return str.length < len ? zeroes[len - str.length] + str : str;
 }
@@ -107,16 +108,26 @@ class Numeric {
     return new Numeric(this.#number >= 0n ? this.#number : -this.#number, false);
   }
   floor() {
-    return new Numeric(this.#number - (this.#number % one_scaled), false);
+    // this.#number - (this.#number % one_scaled)
+    return new Numeric(this.#number / one_scaled * one_scaled, false);
   }
   ceil() {
     const right = this.#number % one;
     return new Numeric(this.#number - right + (right === 0n ? 0n : one_scaled), false);
   }
   mod(n) {
-    let x = n instanceof Numeric ? n : new Numeric(n, this.#precision);
-    const res = this.#number % x.getNumber();
-    return new Numeric(res, this.#precision, false);
+    // let x = n instanceof Numeric ? n : new Numeric(n, this.#precision);
+    let x;
+    if(x instanceof Numeric){
+        const ns= n.getNumber();
+        // const floor = ns - (ns % one_scaled);
+        x=ns/one_scaled*one_scaled; // floor
+    }else{
+        x=BigInt(n)
+    }
+    //let x = n instanceof Numeric ? n.floor().getNumber() / one_scaled : BigInt(n);
+    const res = this.#number % x;
+    return new Numeric(res, false);
   }
   static floor(n) {
     return new Numeric(n).floor();
@@ -124,21 +135,24 @@ class Numeric {
   static ceil(n) {
     return new Numeric(n).ceil();
   }
-  static #exp(x) {
+  static #exp(x) { // takes in a scaled number
     // 1.5s
-    x = x instanceof Numeric ? x : new Numeric(x);
-    let sum = new Numeric(1); // Initialize sum to 1
-    let term = new Numeric(1); // First term is also 1
+    // x = x instanceof Numeric ? x : new Numeric(x);
+    let sum = one_scaled;//new Numeric(1); // Initialize sum to 1
+    let term = one_scaled; //new Numeric(1); // First term is also 1
     let n = 1; // Start with x^1/1!
 
     // Use a loop to add terms until they are negligibly small
     //let steps=0
     while (true) {
       //steps++
-      term = term.mul(x).div(new Numeric(n)); // Each term is x^n/n!
-      if (term.getNumber() === 0n) break; // Break if the term does not affect the sum
+      //term = term * x / one_scaled / ()
+      term = term * x / one_scaled;
+      term = term / BigInt(n); // we can do this because term  is scaled and n is not
+     // term = term.mul(x).div(new Numeric(n)); // Each term is x^n/n!
+      if (term === 0n) break; // Break if the term does not affect the sum
 
-      sum = sum.add(term); // Add the term to the sum
+      sum = sum + term; //sum.add(term) // Add the term to the sum
       n++; // Increment n for the next term
     }
     //console.log({steps})
@@ -152,48 +166,53 @@ class Numeric {
     return BigInt(n.toString(2).length);
   }
   static #log2BigInt(n) {
-    if (n <= 0n) {
-      throw new Error("Argument must be positive");
-    }
+    // if (n <= 0n) {
+    //   throw new Error("Argument must be positive");
+    // }
 
     let log2 = 0;
+    if(n>=one_scaled){
+        log2+=73;
+        n/=magic_log;
+    }
     while (n > 1n) {
       n >>= 1n; // Equivalent to dividing by 2
       log2++;
     }
-    return log2;
+    return BigInt(log2);
   }
   static exp(x) {
-    x = x instanceof Numeric ? x : new Numeric(x);
-    if (x.getNumber() < new Numeric(5).getNumber()) return Numeric.#exp(x);
-    // exp(x) = exp(x/n)**n
-    const div = Numeric.#log2BigInt(x.getNumber());
-    return Numeric.#pow2(Numeric.#exp(x.div(div)), div);
-  }
+    x = Numeric.parseScaled(x); // x instanceof Numeric ? x : new Numeric(x);
+    if (x < five_scaled) return new Numeric(Numeric.#exp(x),false);
+    const div = Numeric.#log2BigInt(x); // unscaled div
+    const scaled_result =  Numeric.#pow2(Numeric.#exp(x/div), div);
+    return new Numeric(scaled_result, false);
+}
   static expl(x) {
     x = x instanceof Numeric ? x : new Numeric(x);
     if (x.getNumber() < new Numeric(5).getNumber()) return Numeric.#exp(x);
     // exp(x) = exp(x/n)**n
     const div = Numeric.log(2n, x.getNumber()).ceil();
-    return Numeric.#pow2(Numeric.#exp(x.div(div)), div);
+    Numeric.#pow2(Numeric.#exp(x.div(div)), div);
   }
-  static #pow2(base, exponent) {
+  static #pow2(base, exponent) { // takes in scaled base and unscaled exponent
     // faster pow assuming exponent is a power of 2
-    base = base instanceof Numeric ? base : new Numeric(base);
-    exponent = exponent instanceof Numeric ? exponent : new Numeric(exponent);
-    const zero = new Numeric(0);
-    const one = new Numeric(1);
-    const two = new Numeric(2);
-    let result = new Numeric(1); // Start with the identity element of multiplication
-    while (exponent.getNumber() > zero) {
+    //base = base instanceof Numeric ? base : new Numeric(base);
+    // exponent = exponent instanceof Numeric ? exponent : new Numeric(exponent);
+    const zero = 0n;//new Numeric(0);
+    let result = one_scaled;//new Numeric(1); // Start with the identity element of multiplication
+    while (exponent > zero) {
       // If exponent is odd, multiply the result by the base
-      if (exponent.mod(two).floor().getNumber() === one.getNumber()) {
-        result = result.mul(base);
+      let comp = exponent;
+      comp = comp % 2n;
+      //if (exponent.mod(two).floor().getNumber() === one_scaled) {
+        if (comp=== 1n) {
+        result = result*base/one_scaled;//result.mul(base);
       }
       // Square the base
-      base = base.mul(base);
+      base = base*base/one_scaled;//base.mul(base);
       // Halve the exponent, assuming it is an integer
-      exponent = exponent.div(two).floor();
+      exponent = exponent/2n//.div(two).floor();
       // exponent = Numeric.floor(exponent.getNumber() / two.getNumber());
     }
     return result;
